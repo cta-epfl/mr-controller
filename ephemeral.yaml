@@ -20,7 +20,7 @@ spec:
         fsGroup: 1000
       serviceAccount: ephemeral-environment-controller
       containers:
-        - image: busybox # override this with a cloud-specific image
+        - image: docker.io/ph0tonic/gitops-toolkit:dev
           name: controller
           imagePullPolicy: Always
           envFrom:

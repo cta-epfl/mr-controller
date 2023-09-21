@@ -19,11 +19,6 @@ vars:
 configurations:
   - kustomizeconfig.yaml
 
-images:
-  - name: busybox
-    newName: docker.io/ph0tonic/gitops-toolkit
-    newTag: dev
-
 namespace: flux-system
 
 configMapGenerator:
