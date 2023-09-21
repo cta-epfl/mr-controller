@@ -1,0 +1,27 @@
+# permissions for end users to view featuremrcontrollers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: featuremrcontroller-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: mr-controller
+    app.kubernetes.io/part-of: mr-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: featuremrcontroller-viewer-role
+rules:
+- apiGroups:
+  - apps.my.domain
+  resources:
+  - featuremrcontrollers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps.my.domain
+  resources:
+  - featuremrcontrollers/status
+  verbs:
+  - get
