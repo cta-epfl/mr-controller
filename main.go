@@ -36,7 +36,11 @@ func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, er
 	return namespacesIds, nil
 }
 
-func spawnNewEnv(newMergeRequests []*gitlab.MergeRequest){
+func spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix string){
+
+}
+
+func reapOldEnv(envIdsToDrop []int, envPrefix string){
 
 }
 
@@ -71,21 +75,27 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 		// TODO: Manage nill
 	}
 
-	var merge_request_ids []int
-	for _, mr := range openMergeRequests{
-		merge_request_ids = append(merge_request_ids, mr.ID)
-	}
-
 	// Identify new MR
+	var openMergeRequestIds []int
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
+		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.ID.ID)
 		if !slices.Contains(existingEnvIds, mergeRequest.ID){
 			newMergeRequests = append(newMergeRequests, mergeRequest)
 		}
 	}
-	spawnNewEnv(newMergeRequests)
+	spawnNewEnv(newMergeRequests, envPrefix)
 
 	// Identify env to reap
+	envIdsToDrop := []int{}
+	for _, id := range existingEnvIds {
+		if !slices.Contains(openMergeRequestIds, id) {
+			envIdsToDrop = append(envIdsToDrop, id)
+		}
+	}
+	reapOldEnv(envIdsToDrop, envPrefix)
+
+	// TODO: Identify env top update
 }
 
 func main() {
