@@ -10,6 +10,7 @@ import (
 
 	"github.com/xanzy/go-gitlab"
 	"golang.org/x/exp/slices"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -36,12 +37,30 @@ func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, er
 	return namespacesIds, nil
 }
 
-func spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix string){
+func spawnNewEnv(clientset *kubernetes.Clientset, newMergeRequests []*gitlab.MergeRequest, envPrefix string){
+	for _, mergeRequest := range newMergeRequests {
+		// Namespace
+		namespace := envPrefix + strconv.Itoa(mergeRequest.ID)
+		clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind: "Namespace",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: namespace,
+			},
+		}, metav1.CreateOptions{})
 
+		// TODO: ESAP
+	}
 }
 
-func reapOldEnv(envIdsToDrop []int, envPrefix string){
-
+func reapOldEnv(clientset *kubernetes.Clientset, envIdsToDrop []int, envPrefix string){
+	for _, envId := range envIdsToDrop {
+		// Namespace
+		namespace := envPrefix + strconv.Itoa(envId)
+		clientset.CoreV1().Namespaces().Delete(context.TODO(), namespace,*metav1.NewDeleteOptions(0))
+	}
 }
 
 func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
@@ -58,7 +77,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 
 	// TODO: Extract in option struct
 	targetBranch := os.Getenv("TARGET_BRANCH")
-	projectId := os.Getenv("PROJECT_ID")
+	projectId := os.Getenv("GITLAB_PROJECT_ID")
 	envPrefix := os.Getenv("ENV_PREFIX")
 
 	existingEnvIds, err := loadCurrentEnv(clientset, envPrefix)
@@ -79,12 +98,12 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 	var openMergeRequestIds []int
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
-		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.ID.ID)
+		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.ID)
 		if !slices.Contains(existingEnvIds, mergeRequest.ID){
 			newMergeRequests = append(newMergeRequests, mergeRequest)
 		}
 	}
-	spawnNewEnv(newMergeRequests, envPrefix)
+	spawnNewEnv(clientset, newMergeRequests, envPrefix)
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
@@ -93,7 +112,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 			envIdsToDrop = append(envIdsToDrop, id)
 		}
 	}
-	reapOldEnv(envIdsToDrop, envPrefix)
+	reapOldEnv(clientset, envIdsToDrop, envPrefix)
 
 	// TODO: Identify env top update
 }
@@ -110,13 +129,14 @@ func main() {
 		panic(err.Error())
 	}
 
-	GITLAB_TOKEN := os.Getenv("GITLAB_TOKEN")
-	git, err := gitlab.NewClient(GITLAB_TOKEN)
+	gitlabUrl := os.Getenv("GITLAB_URL")
+	gitlabToken := os.Getenv("GITLAB_TOKEN")
+	git, err := gitlab.NewClient(gitlabToken, gitlab.WithBaseURL(gitlabUrl))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Minute)
 	quit := make(chan struct{})
 	go func() {
 		for {

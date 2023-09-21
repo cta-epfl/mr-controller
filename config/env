@@ -1,6 +1,6 @@
 KUBE_SECRET=flux-system
-SSH_KEY_NAME=identity
-SYNC_PERIOD=3600
-GIT_REPO=git@github.com:alam0rt/flux.git
 GIT_BRANCH=main
-GIT_SSH_COMMAND=ssh -i /app/ssh_keys/${SSH_KEY_NAME:-id_rsa} -o CheckHostIP=no -o UserKnownHostsFile=/app/ssh_keys/known_hosts -F /dev/null
+GITLAB_URL=https://gitlab.cta-observatory.org
+GITLAB_PROJECT_ID=cta-computing/suss/sdc-portal/prototypes/ctao-esap-sdc-portal
+GITLAB_TOKEN=
+ENV_PREFIX=esap-mr-
