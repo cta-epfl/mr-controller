@@ -27,6 +27,8 @@ spec:
             - configMapRef:
                 name: ephemeral-environment-controller
           env:
+            - name: TARGET_BRANCH
+              value: main
             - name: RECONCILE_SH # override this env var with a shell function in a kustomize patch
               value: |-
                 reconcile() {

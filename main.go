@@ -2,21 +2,48 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xanzy/go-gitlab"
-	"k8s.io/apimachinery/pkg/api/errors"
+	"golang.org/x/exp/slices"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
+func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, error){
+	// Load existing namespaces
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	namespacesIds := []int{}
+	for _, namespace := range namespaces.Items {
+		if strings.HasPrefix(namespace.Name, envPrefix){
+			id, err := strconv.Atoi(strings.TrimPrefix(namespace.Namespace, envPrefix))
+			if err != nil {
+				print("Invalid namespace id detected")
+			} else {
+				namespacesIds = append(namespacesIds, id)
+			}
+		}
+	}
+	return namespacesIds, nil
+}
+
+func spawnNewEnv(newMergeRequests []*gitlab.MergeRequest){
+
+}
+
 func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
-	
 	// TODO: implement
-	// 1. Get open MR
+	// 0. Load existing environements -> OK
+	// 1. Get open MR -> OK
 	// 2. Detect closed MR
 	// 2a. Delete environement
 	// 3. Detect opened MR
@@ -25,46 +52,43 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 	// 4a. Update environement
 	// 5. Messages on GitLab MR
 
-	targetBranch := "main"
+	// TODO: Extract in option struct
+	targetBranch := os.Getenv("TARGET_BRANCH")
+	projectId := os.Getenv("PROJECT_ID")
+	envPrefix := os.Getenv("ENV_PREFIX")
+
+	existingEnvIds, err := loadCurrentEnv(clientset, envPrefix)
+	if err != nil {
+		// TODO: Manage error
+	}
+
 	openedState := "opened"
-	merge_requests, _, err := git.MergeRequests.ListProjectMergeRequests("porjectId", &gitlab.ListProjectMergeRequestsOptions{
+	openMergeRequests, _, err := git.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
 		TargetBranch: &targetBranch,
 		State: &openedState,
 	})
-
 	if err == nil {
 		// TODO: Manage nill
 	}
 
-	var ids []int
-	for _, mr := range merge_requests{
-		ids = append(ids, mr.ID)
+	var merge_request_ids []int
+	for _, mr := range openMergeRequests{
+		merge_request_ids = append(merge_request_ids, mr.ID)
 	}
 
-	// Identify new merge_requests
-	// TODO: Load currently deployed namespace
-	_, err = clientset.CoreV1().Namespaces().Get(context.TODO(), "", metav1.GetOptions{})
-
-
-	// Examples for error handling:
-	// - Use helper functions e.g. errors.IsNotFound()
-	// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
-	_, err = clientset.CoreV1().Pods("default").Get(context.TODO(), "example-xxxxx", metav1.GetOptions{})
-	if errors.IsNotFound(err) {
-		fmt.Printf("Pod example-xxxxx not found in default namespace\n")
-	} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-		fmt.Printf("Error getting pod %v\n", statusError.ErrStatus.Message)
-	} else if err != nil {
-		panic(err.Error())
-	} else {
-		fmt.Printf("Found example-xxxxx pod in default namespace\n")
+	// Identify new MR
+	newMergeRequests := []*gitlab.MergeRequest{}
+	for _, mergeRequest := range openMergeRequests {
+		if !slices.Contains(existingEnvIds, mergeRequest.ID){
+			newMergeRequests = append(newMergeRequests, mergeRequest)
+		}
 	}
+	spawnNewEnv(newMergeRequests)
 
+	// Identify env to reap
 }
 
 func main() {
-    fmt.Println("Hello, world.")
-
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -75,34 +99,9 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	for {
-		// get pods in all the namespaces by omitting namespace
-		// Or specify namespace to get pods in particular namespace
-		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			panic(err.Error())
-		}
-		fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
 
-		// Examples for error handling:
-		// - Use helper functions e.g. errors.IsNotFound()
-		// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
-		_, err = clientset.CoreV1().Pods("default").Get(context.TODO(), "example-xxxxx", metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			fmt.Printf("Pod example-xxxxx not found in default namespace\n")
-		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-			fmt.Printf("Error getting pod %v\n", statusError.ErrStatus.Message)
-		} else if err != nil {
-			panic(err.Error())
-		} else {
-			fmt.Printf("Found example-xxxxx pod in default namespace\n")
-		}
-
-		time.Sleep(10 * time.Second)
-	}
-	
-	gitlab_token := "gitlab_token"
-	git, err := gitlab.NewClient(gitlab_token)
+	GITLAB_TOKEN := os.Getenv("GITLAB_TOKEN")
+	git, err := gitlab.NewClient(GITLAB_TOKEN)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -120,7 +119,4 @@ func main() {
 			}
 		}
 	 }()
-	 
-
-
 }
