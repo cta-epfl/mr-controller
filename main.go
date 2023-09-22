@@ -113,11 +113,13 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 		}
 	}
 	reapOldEnv(clientset, envIdsToDrop, envPrefix)
-
+	
 	// TODO: Identify env top update
 }
 
 func main() {
+	log.Println("Starting")
+
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -148,5 +150,19 @@ func main() {
 				return
 			}
 		}
-	 }()
+	}()
+
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until we receive our signal.
+	<-interruptChan
+
+	// create a deadline to wait for.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	quit <- true
+
+	log.Println("Shutting down")
+	os.Exit(0)
 }

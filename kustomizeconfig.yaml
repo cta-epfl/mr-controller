@@ -1,5 +1,5 @@
 varReference:
-- path: rules/resourceNames
-  kind: Role
-- path: spec/template/spec/volumes/secret
-  kind: Deployment
+  - path: rules/resourceNames
+    kind: Role
+  - path: spec/template/spec/volumes/secret
+    kind: Deployment
