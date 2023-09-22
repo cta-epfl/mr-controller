@@ -29,8 +29,9 @@ func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, er
 	for _, namespace := range namespaces.Items {
 		if strings.HasPrefix(namespace.Name, envPrefix){
 			id, err := strconv.Atoi(strings.TrimPrefix(namespace.Namespace, envPrefix))
+			
 			if err != nil {
-				print("Invalid namespace id detected")
+				log.Printf("Invalid namespace id detected: %s\n", err)
 			} else {
 				namespacesIds = append(namespacesIds, id)
 			}
@@ -44,7 +45,7 @@ func spawnNewEnv(clientset *kubernetes.Clientset, newMergeRequests []*gitlab.Mer
 		// Namespace
 		namespace := envPrefix + strconv.Itoa(mergeRequest.ID)
 		log.Printf("Spawn new env: %s\n", namespace)
-		clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
+		_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "v1",
 				Kind: "Namespace",
@@ -54,6 +55,9 @@ func spawnNewEnv(clientset *kubernetes.Clientset, newMergeRequests []*gitlab.Mer
 			},
 		}, metav1.CreateOptions{})
 
+		if err != nil {
+			log.Printf("Unable to spawn namespace: %s\n", err)
+		}
 		// TODO: ESAP
 	}
 }
@@ -96,7 +100,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 		TargetBranch: &targetBranch,
 		State: &openedState,
 	})
-	if err == nil {
+	if err != nil {
 		// TODO: Manage error
 		log.Printf("Unable to list project MR: %s\n", err)
 	}
@@ -149,6 +153,7 @@ func main() {
 	ticker := time.NewTicker(2 * time.Minute)
 	quit := make(chan bool)
 	go func() {
+		loop(clientset, git)
 		for {
 			log.Println("Loop start")
 		    select {
