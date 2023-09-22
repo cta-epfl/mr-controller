@@ -4,8 +4,10 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/xanzy/go-gitlab"
@@ -41,6 +43,7 @@ func spawnNewEnv(clientset *kubernetes.Clientset, newMergeRequests []*gitlab.Mer
 	for _, mergeRequest := range newMergeRequests {
 		// Namespace
 		namespace := envPrefix + strconv.Itoa(mergeRequest.ID)
+		log.Printf("Spawn new env: %s\n", namespace)
 		clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "v1",
@@ -59,6 +62,7 @@ func reapOldEnv(clientset *kubernetes.Clientset, envIdsToDrop []int, envPrefix s
 	for _, envId := range envIdsToDrop {
 		// Namespace
 		namespace := envPrefix + strconv.Itoa(envId)
+		log.Printf("Reap outdated env: %s\n", namespace)
 		clientset.CoreV1().Namespaces().Delete(context.TODO(), namespace,*metav1.NewDeleteOptions(0))
 	}
 }
@@ -83,17 +87,21 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 	existingEnvIds, err := loadCurrentEnv(clientset, envPrefix)
 	if err != nil {
 		// TODO: Manage error
+		log.Printf("Unable to load existing envs: %s\n", err)
 	}
-
+	log.Printf("Loaded  %s envs\n", strconv.Itoa(len(existingEnvIds)))
+	
 	openedState := "opened"
 	openMergeRequests, _, err := git.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
 		TargetBranch: &targetBranch,
 		State: &openedState,
 	})
 	if err == nil {
-		// TODO: Manage nill
+		// TODO: Manage error
+		log.Printf("Unable to list project MR: %s\n", err)
 	}
-
+	log.Printf("Loaded %s open MR\n", strconv.Itoa(len(openMergeRequests)))
+	
 	// Identify new MR
 	var openMergeRequestIds []int
 	newMergeRequests := []*gitlab.MergeRequest{}
@@ -104,7 +112,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 		}
 	}
 	spawnNewEnv(clientset, newMergeRequests, envPrefix)
-
+	
 	// Identify env to reap
 	envIdsToDrop := []int{}
 	for _, id := range existingEnvIds {
@@ -118,7 +126,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 }
 
 func main() {
-	log.Println("Starting")
+	log.Println("Starting server")
 
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
@@ -139,10 +147,11 @@ func main() {
 	}
 
 	ticker := time.NewTicker(2 * time.Minute)
-	quit := make(chan struct{})
+	quit := make(chan bool)
 	go func() {
 		for {
-		   select {
+			log.Println("Loop start")
+		    select {
 			case <- ticker.C:
 				loop(clientset, git)
 			case <- quit:
@@ -159,7 +168,7 @@ func main() {
 	<-interruptChan
 
 	// create a deadline to wait for.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	_, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	quit <- true
 
