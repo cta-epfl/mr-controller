@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"cta.epfl.ch/mr-feature-controller/git"
 	"github.com/xanzy/go-gitlab"
 	"golang.org/x/exp/slices"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -28,8 +32,8 @@ func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, er
 	namespacesIds := []int{}
 	for _, namespace := range namespaces.Items {
 		if strings.HasPrefix(namespace.Name, envPrefix){
-			id, err := strconv.Atoi(strings.TrimPrefix(namespace.Namespace, envPrefix))
-			
+			id, err := strconv.Atoi(strings.TrimPrefix(namespace.Name, envPrefix))
+
 			if err != nil {
 				log.Printf("Invalid namespace id detected: %s\n", err)
 			} else {
@@ -40,38 +44,72 @@ func loadCurrentEnv(clientset *kubernetes.Clientset, envPrefix string)([]int, er
 	return namespacesIds, nil
 }
 
-func spawnNewEnv(clientset *kubernetes.Clientset, newMergeRequests []*gitlab.MergeRequest, envPrefix string){
+func replaceInFile(file string, search string, replace string) {
+	input, err := os.ReadFile(file)
+	if err != nil {
+		panic(err)
+	}
+
+	output := bytes.Replace(input, []byte(search), []byte(replace), -1)
+
+	if err = os.WriteFile(file, output, 0666); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, envPrefix string){
+	repo.Pull()
+
 	for _, mergeRequest := range newMergeRequests {
 		// Namespace
-		namespace := envPrefix + strconv.Itoa(mergeRequest.ID)
-		log.Printf("Spawn new env: %s\n", namespace)
-		_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: "v1",
-				Kind: "Namespace",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: namespace,
-			},
-		}, metav1.CreateOptions{})
+		mrId := strconv.Itoa(mergeRequest.ID)
+ 
+		base := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr")
+		reference := filepath.Join(base, "reference")
+		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.ID))
 
-		if err != nil {
-			log.Printf("Unable to spawn namespace: %s\n", err)
+		if _, err := os.Stat(cloned); os.IsNotExist(err) {
+			cmd := exec.Command("cp", "--recursive", reference, cloned)
+			cmd.Run()
+
+			files := []string{
+				filepath.Join(cloned, "esap-values.yaml"),
+				filepath.Join(cloned, "namespace.yaml"),
+				filepath.Join(cloned, "kustomization.yaml"),
+			}
+
+			searchValue := "esap-mr"
+			replaceValue := "esap-mr-" + mrId
+			for _, file := range files{
+				replaceInFile(file, searchValue, replaceValue)
+			}
+
+			replaceInFile(base+"kustomization.yaml", "resources:", "resources:\n  - mr-"+mrId+"/kustomization.yaml")
 		}
-		// TODO: ESAP
 	}
+
+	repo.AddAll()
+	repo.Commit("[MR Controller]")
+	repo.Push()
 }
 
-func reapOldEnv(clientset *kubernetes.Clientset, envIdsToDrop []int, envPrefix string){
+func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string){
 	for _, envId := range envIdsToDrop {
 		// Namespace
-		namespace := envPrefix + strconv.Itoa(envId)
-		log.Printf("Reap outdated env: %s\n", namespace)
-		clientset.CoreV1().Namespaces().Delete(context.TODO(), namespace,*metav1.NewDeleteOptions(0))
+		mrId := strconv.Itoa(envId)
+		path := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr-"+mrId)
+
+		err := os.RemoveAll(path)
+		if err != nil{
+			log.Printf("Error while ripping env: %s - %s\n", "mr-"+mrId, err)
+		} else {
+			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
+		}
 	}
 }
 
-func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
+func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.Repository){
 	// TODO: implement
 	// 0. Load existing environements -> OK
 	// 1. Get open MR -> OK
@@ -94,9 +132,9 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 		log.Printf("Unable to load existing envs: %s\n", err)
 	}
 	log.Printf("Loaded  %s envs\n", strconv.Itoa(len(existingEnvIds)))
-	
+
 	openedState := "opened"
-	openMergeRequests, _, err := git.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
+	openMergeRequests, _, err := gitlabApi.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
 		TargetBranch: &targetBranch,
 		State: &openedState,
 	})
@@ -115,7 +153,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 			newMergeRequests = append(newMergeRequests, mergeRequest)
 		}
 	}
-	spawnNewEnv(clientset, newMergeRequests, envPrefix)
+	spawnNewEnv(repo, newMergeRequests, envPrefix)
 	
 	// Identify env to reap
 	envIdsToDrop := []int{}
@@ -124,7 +162,7 @@ func loop(clientset *kubernetes.Clientset, git *gitlab.Client){
 			envIdsToDrop = append(envIdsToDrop, id)
 		}
 	}
-	reapOldEnv(clientset, envIdsToDrop, envPrefix)
+	reapOldEnv(repo, envIdsToDrop, envPrefix)
 	
 	// TODO: Identify env top update
 }
@@ -143,6 +181,13 @@ func main() {
 		panic(err.Error())
 	}
 
+	repository := os.Getenv("HELM_REPOSITORY")
+	folder, err := os.MkdirTemp("", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	repo := git.NewGit(folder, repository)
+
 	gitlabUrl := os.Getenv("GITLAB_URL")
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	git, err := gitlab.NewClient(gitlabToken, gitlab.WithBaseURL(gitlabUrl))
@@ -153,12 +198,12 @@ func main() {
 	ticker := time.NewTicker(2 * time.Minute)
 	quit := make(chan bool)
 	go func() {
-		loop(clientset, git)
+		loop(clientset, git, repo)
 		for {
 			log.Println("Loop start")
 		    select {
 			case <- ticker.C:
-				loop(clientset, git)
+				loop(clientset, git, repo)
 			case <- quit:
 				ticker.Stop()
 				return
