@@ -98,7 +98,8 @@ func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string){
 	for _, envId := range envIdsToDrop {
 		// Namespace
 		mrId := strconv.Itoa(envId)
-		path := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr-"+mrId)
+		base := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr")
+		path := filepath.Join(base, "mr-"+mrId)
 
 		err := os.RemoveAll(path)
 		if err != nil{
@@ -106,6 +107,7 @@ func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string){
 		} else {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
+		replaceInFile(base+"kustomization.yaml", "  - mr-"+mrId+"/kustomization.yaml\n", "")
 	}
 }
 
