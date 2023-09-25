@@ -77,6 +77,8 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 				filepath.Join(cloned, "esap-values.yaml"),
 				filepath.Join(cloned, "namespace.yaml"),
 				filepath.Join(cloned, "kustomization.yaml"),
+				filepath.Join(cloned, "django-secret-key-secret.yaml"),
+				filepath.Join(cloned, "gitlab-ctao-secret.yaml"),
 			}
 
 			searchValue := "esap-mr"
@@ -86,6 +88,7 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 			}
 
 			replaceInFile(base+"kustomization.yaml", "resources:", "resources:\n  - mr-"+mrId+"/kustomization.yaml")
+			log.Printf("Create new env: %s\n", "mr-"+mrId)
 		}
 	}
 

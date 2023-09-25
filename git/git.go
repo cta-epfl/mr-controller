@@ -25,26 +25,26 @@ func NewGit(folder string, repo string) *Repository{
 	return g
 }
 
-func (g *Repository) AddAll() {
+func (g *Repository) AddAll() error{
 	cmd := exec.Command("git", "add", ".")
 	cmd.Dir = g.BaseFolder+"/"+g.Folder
-	cmd.Run()
+	return cmd.Run()
 }
 
-func (g *Repository) Commit(message string) {
+func (g *Repository) Commit(message string) error{
 	cmd := exec.Command("git", "commit", "-m", message)
 	cmd.Dir = g.BaseFolder+"/"+g.Folder
-	cmd.Run()
+	return cmd.Run()
 }
 
-func (g *Repository) Push() {
+func (g *Repository) Push() error{
 	cmd := exec.Command("git", "push")
 	cmd.Dir = g.BaseFolder+"/"+g.Folder
-	cmd.Run()
+	return cmd.Run()
 }
 
-func (g *Repository) Pull() {
+func (g *Repository) Pull() error{
 	cmd := exec.Command("git", "pull")
 	cmd.Dir = g.BaseFolder+"/"+g.Folder
-	cmd.Run()
+	return cmd.Run()
 }
