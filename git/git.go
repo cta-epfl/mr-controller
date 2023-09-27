@@ -1,50 +1,82 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 )
 
 type Repository struct {
 	Repository string
-	BaseFolder string
 	Folder string
 }
 
-func NewGit(folder string, repo string) *Repository{
+func NewGit(folder string, repo string) (*Repository, error){
 	g:= &Repository{
 		Repository: repo,
-		BaseFolder: folder,
-		Folder: "base",
+		Folder: folder,
 	}
 
-	cmd := exec.Command(fmt.Sprintf("git clone %s %s", repo, folder))
-	cmd.Dir = g.BaseFolder
+	cmd := exec.Command("git", "config", "--global", "user.name", "mrcontroller[bot]")
+	cmd.Run()
+	cmd = exec.Command("git", "config", "--global", "user.email", "mrcontroller[bot]@epfl.ch")
 	cmd.Run()
 
-	return g
+	cmd = exec.Command("git", "clone", repo, folder)
+	cmd.Dir = g.Folder
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	fmt.Println("out:", outb.String(), "err:", errb.String())
+
+	return g, err
 }
 
 func (g *Repository) AddAll() error{
 	cmd := exec.Command("git", "add", ".")
-	cmd.Dir = g.BaseFolder+"/"+g.Folder
+	cmd.Dir = g.Folder
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	fmt.Println("out:", outb.String(), "err:", errb.String())
+	return err
 	return cmd.Run()
 }
 
 func (g *Repository) Commit(message string) error{
-	cmd := exec.Command("git", "commit", "-m", message)
-	cmd.Dir = g.BaseFolder+"/"+g.Folder
+	cmd := exec.Command("git", "commit", "-m", "\""+message+"\"")
+	cmd.Dir = g.Folder
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	fmt.Println("out:", outb.String(), "err:", errb.String())
+	return err
 	return cmd.Run()
 }
 
 func (g *Repository) Push() error{
-	cmd := exec.Command("git", "push")
-	cmd.Dir = g.BaseFolder+"/"+g.Folder
+	cmd := exec.Command("git", "push", "-u", "origin", "main")
+	cmd.Dir = g.Folder
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	fmt.Println("out:", outb.String(), "err:", errb.String())
+	return err
 	return cmd.Run()
 }
 
 func (g *Repository) Pull() error{
 	cmd := exec.Command("git", "pull")
-	cmd.Dir = g.BaseFolder+"/"+g.Folder
+	cmd.Dir = g.Folder
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	fmt.Println("out:", outb.String(), "err:", errb.String())
+	return err
 	return cmd.Run()
 }

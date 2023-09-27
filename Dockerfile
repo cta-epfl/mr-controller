@@ -18,29 +18,10 @@ RUN CGO_ENABLED=0 go build -o service
 FROM golang:1.21.1-alpine3.18 AS final
 
 WORKDIR /app
-RUN apk add --no-cache git && rm -rf /var/cache/apk/*
+RUN apk add --no-cache git openssh-client && rm -rf /var/cache/apk/*
 COPY --from=builder /app/service .
 
+RUN addgroup -g 1000 app \
+    && adduser -G app -u 1000 app -D
+
 CMD ["./service"]
-
-
-# FROM debian:bookworm-slim
-
-# LABEL author=ph0tonic
-# ENV UID=1000
-
-# RUN apt-get update && apt-get install -y \
-#     git \
-#     curl \
-#     bash \
-#   && rm -rf /var/lib/apt/lists/*
-
-# RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-#   && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
-#   && rm kubectl
-
-# RUN [ -x /usr/sbin/useradd ] && useradd -m -u ${UID} ephemeral-controller -s /bin/bash
-
-# USER ${UID}}
-
-# ENTRYPOINT [ "bash" ]

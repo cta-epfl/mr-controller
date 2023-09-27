@@ -65,13 +65,18 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 		// Namespace
 		mrId := strconv.Itoa(mergeRequest.ID)
  
-		base := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr")
+		base := filepath.Join(repo.Folder, "apps/esap/mr")
 		reference := filepath.Join(base, "reference")
 		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.ID))
 
 		if _, err := os.Stat(cloned); os.IsNotExist(err) {
 			cmd := exec.Command("cp", "--recursive", reference, cloned)
-			cmd.Run()
+			err := cmd.Run()
+			if err != nil {
+				log.Println(reference)
+				log.Println(cloned)
+				log.Fatalf("Error while duplicating reference folder: %s", err)
+			}
 
 			files := []string{
 				filepath.Join(cloned, "esap-values.yaml"),
@@ -87,21 +92,32 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 				replaceInFile(file, searchValue, replaceValue)
 			}
 
-			replaceInFile(base+"kustomization.yaml", "resources:", "resources:\n  - mr-"+mrId+"/kustomization.yaml")
+			replaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", "resources:\n  - mr-"+mrId+"/kustomization.yaml")
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 		}
 	}
 
-	repo.AddAll()
-	repo.Commit("[MR Controller]")
-	repo.Push()
+	err := repo.AddAll()
+	if err != nil{
+		log.Fatalf("Add all error: %s", err)
+	}
+	err = repo.Commit("[MR Controller] spawn new envs")
+	if err != nil{
+		log.Fatalf("Commit error: %s", err)
+	}
+	err = repo.Push()
+	if err != nil{
+		log.Fatalf("Push error: %s", err)
+	}
 }
 
 func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string){
+	repo.Pull()
+
 	for _, envId := range envIdsToDrop {
 		// Namespace
 		mrId := strconv.Itoa(envId)
-		base := filepath.Join(repo.BaseFolder, repo.Folder, "apps/esap/mr")
+		base := filepath.Join(repo.Folder, "apps/esap/mr")
 		path := filepath.Join(base, "mr-"+mrId)
 
 		err := os.RemoveAll(path)
@@ -112,6 +128,10 @@ func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string){
 		}
 		replaceInFile(base+"kustomization.yaml", "  - mr-"+mrId+"/kustomization.yaml\n", "")
 	}
+	
+	repo.AddAll()
+	repo.Commit("[MR Controller] reaped old envs")
+	repo.Push()
 }
 
 func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.Repository){
@@ -175,6 +195,48 @@ func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.R
 func main() {
 	log.Println("Starting server")
 
+	err := os.Mkdir("/home/app/.ssh", 0700)
+	if err != nil{
+		log.Printf("Error creating .ssh folder: %s\n", err)
+	}
+
+	fileConfig, _ := os.Create("/home/app/.ssh/config")
+	fileConfig.Write([]byte("IdentityFile /home/app/.ssh/id_ecdsa\n"))
+	
+	fileKnownHosts, _ := os.Create("/home/app/.ssh/known_hosts")
+	fileKnownHosts.Write([]byte(os.Getenv("FLUX_KNOWN_HOSTS")))
+
+	fileEcdsa, _ := os.Create("/home/app/.ssh/id_ecdsa")
+	fileEcdsa.Write([]byte(os.Getenv("FLUX_IDENTITY")))
+	fileEcdsa.Chmod(0600)
+
+	fileEcdsaPub, _ := os.Create("/home/app/.ssh/id_ecdsa-pub")
+	fileEcdsaPub.Write([]byte(os.Getenv("FLUX_IDENTITY_PUB")))
+	fileEcdsaPub.Chmod(0644)
+
+	// Flux repository
+	repository := os.Getenv("FLUX_REPOSITORY")
+	dir, err := os.MkdirTemp("", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(dir) // clean up
+
+	repo, err := git.NewGit(dir, repository)
+	if err != nil{
+		log.Printf("Error while initialising main flux config repository: %s", err)
+		// os.Exit(-1)
+		time.Sleep(30 * time.Second)
+	}
+
+	// Watched repository
+	gitlabUrl := os.Getenv("GITLAB_URL")
+	gitlabToken := os.Getenv("GITLAB_TOKEN")
+	git, err := gitlab.NewClient(gitlabToken, gitlab.WithBaseURL(gitlabUrl))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -184,20 +246,6 @@ func main() {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err.Error())
-	}
-
-	repository := os.Getenv("HELM_REPOSITORY")
-	folder, err := os.MkdirTemp("", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	repo := git.NewGit(folder, repository)
-
-	gitlabUrl := os.Getenv("GITLAB_URL")
-	gitlabToken := os.Getenv("GITLAB_TOKEN")
-	git, err := gitlab.NewClient(gitlabToken, gitlab.WithBaseURL(gitlabUrl))
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
 	}
 
 	ticker := time.NewTicker(2 * time.Minute)
