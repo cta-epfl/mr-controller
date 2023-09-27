@@ -42,7 +42,6 @@ func (g *Repository) AddAll() error{
 	err := cmd.Run()
 	fmt.Println("out:", outb.String(), "err:", errb.String())
 	return err
-	return cmd.Run()
 }
 
 func (g *Repository) Commit(message string) error{
