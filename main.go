@@ -64,6 +64,7 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 	for _, mergeRequest := range newMergeRequests {
 		// Namespace
 		mrId := strconv.Itoa(mergeRequest.ID)
+		log.Printf("Generate helm chart for PR %s", mrId)
  
 		base := filepath.Join(repo.Folder, "apps/esap/mr")
 		reference := filepath.Join(base, "reference")
@@ -103,6 +104,8 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 	}
 	err = repo.Commit("[MR Controller] spawn new envs")
 	if err != nil{
+		log.Printf("Commit error: %s", err)
+		time.Sleep(30 * time.Minute)
 		log.Fatalf("Commit error: %s", err)
 	}
 	err = repo.Push()
@@ -195,24 +198,37 @@ func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.R
 func main() {
 	log.Println("Starting server")
 
-	// err := os.Mkdir("/home/app/.ssh", 0700)
+	err := os.Mkdir("/home/app/.ssh", 0700)
+	if err != nil{
+		log.Printf("Error creating .ssh folder: %s\n", err)
+	}
+
+	fileConfig, _ := os.Create("/home/app/.ssh/config")
+	fileConfig.Write([]byte("IdentityFile /home/app/.ssh/id_ecdsa\n"))
+	
+	fileKnownHosts, _ := os.Create("/home/app/.ssh/known_hosts")
+	fileKnownHosts.Write([]byte(os.Getenv("FLUX_KNOWN_HOSTS")))
+
+	fileEcdsa, _ := os.Create("/home/app/.ssh/id_ecdsa")
+	fileEcdsa.Write([]byte(os.Getenv("FLUX_IDENTITY")))
+	fileEcdsa.Chmod(0600)
+
+	fileEcdsaPub, _ := os.Create("/home/app/.ssh/id_ecdsa-pub")
+	fileEcdsaPub.Write([]byte(os.Getenv("FLUX_IDENTITY_PUB")))
+	fileEcdsaPub.Chmod(0644)
+
+	
+	// cmd := exec.Command("cp", "/app/ssh-keys/*", "/home/app/.ssh")
+	// err := cmd.Run()
 	// if err != nil{
-	// 	log.Printf("Error creating .ssh folder: %s\n", err)
+	// 	log.Printf("Error while ssh config folder: %s", err)
 	// }
 
 	// fileConfig, _ := os.Create("/home/app/.ssh/config")
-	// fileConfig.Write([]byte("IdentityFile /home/app/.ssh/id_ecdsa\n"))
-	
-	// fileKnownHosts, _ := os.Create("/home/app/.ssh/known_hosts")
-	// fileKnownHosts.Write([]byte(os.Getenv("FLUX_KNOWN_HOSTS")))
+	// fileConfig.Write([]byte("IdentityFile /home/app/.ssh/identity\n"))
 
-	// fileEcdsa, _ := os.Create("/home/app/.ssh/id_ecdsa")
-	// fileEcdsa.Write([]byte(os.Getenv("FLUX_IDENTITY")))
-	// fileEcdsa.Chmod(0600)
+	// os.Chmod("/home/app/.ssh/identity", 0600)
 
-	// fileEcdsaPub, _ := os.Create("/home/app/.ssh/id_ecdsa-pub")
-	// fileEcdsaPub.Write([]byte(os.Getenv("FLUX_IDENTITY_PUB")))
-	// fileEcdsaPub.Chmod(0644)
 
 	// Flux repository
 	repository := os.Getenv("FLUX_REPOSITORY")
@@ -226,7 +242,7 @@ func main() {
 	if err != nil{
 		log.Printf("Error while initialising main flux config repository: %s", err)
 		// os.Exit(-1)
-		time.Sleep(30 * time.Second)
+		time.Sleep(60 * time.Minute)
 	}
 
 	// Watched repository
