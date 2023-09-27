@@ -159,7 +159,7 @@ func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.R
 		// TODO: Manage error
 		log.Printf("Unable to load existing envs: %s\n", err)
 	}
-	log.Printf("Loaded  %s envs\n", strconv.Itoa(len(existingEnvIds)))
+	log.Printf("Loaded %s envs : %v\n", strconv.Itoa(len(existingEnvIds)), existingEnvIds)
 
 	openedState := "opened"
 	openMergeRequests, _, err := gitlabApi.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
@@ -170,7 +170,6 @@ func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.R
 		// TODO: Manage error
 		log.Printf("Unable to list project MR: %s\n", err)
 	}
-	log.Printf("Loaded %s open MR\n", strconv.Itoa(len(openMergeRequests)))
 	
 	// Identify new MR
 	var openMergeRequestIds []int
@@ -181,6 +180,8 @@ func loop(clientset *kubernetes.Clientset, gitlabApi *gitlab.Client, repo *git.R
 			newMergeRequests = append(newMergeRequests, mergeRequest)
 		}
 	}
+	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
+
 	spawnNewEnv(repo, newMergeRequests, envPrefix)
 	
 	// Identify env to reap
