@@ -18,22 +18,25 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// TODO: Create new config struct -> including pid, target_branch and so on
 type App struct {
 	repo   *git.Repository
 	gitlab *gitlab.Client
+	pid    string
 }
 
-func NewApp(repo *git.Repository, gitlabApi *gitlab.Client) *App {
+func NewApp(repo *git.Repository, gitlabApi *gitlab.Client, pid string) *App {
 	return &App{
 		repo:   repo,
 		gitlab: gitlabApi,
+		pid:    pid,
 	}
 }
 
 func (app *App) loadCurrentEnv() ([]int, error) {
 	app.repo.Pull()
 
-	files, err := os.ReadDir(filepath.Join(app.repo.Folder, "apps/esap/mr"))
+	files, err := os.ReadDir(filepath.Join(app.repo.Folder, "apps/esap/mr/"))
 	if err != nil {
 		log.Printf("Unable to read mr folder: %s\n", err)
 		return nil, err
@@ -41,10 +44,9 @@ func (app *App) loadCurrentEnv() ([]int, error) {
 
 	existingEnvIds := []int{}
 	for _, file := range files {
-
 		if file.IsDir() && strings.HasPrefix(file.Name(), "mr-") {
 			id, err := strconv.Atoi(strings.TrimPrefix(file.Name(), "mr-"))
-			if err != nil {
+			if err == nil {
 				existingEnvIds = append(existingEnvIds, id)
 			}
 		}
@@ -57,16 +59,17 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 
 	for _, mergeRequest := range newMergeRequests {
 		// Namespace
-		mrId := strconv.Itoa(mergeRequest.ID)
+		mrId := strconv.Itoa(mergeRequest.IID)
 		log.Printf("Generate helm chart for MR %s", mrId)
 
 		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		reference := filepath.Join(base, "reference")
-		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.ID))
+		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.IID))
 
 		if _, err := os.Stat(cloned); os.IsNotExist(err) {
 			cmd := exec.Command("cp", "--recursive", reference, cloned)
 			err := cmd.Run()
+
 			if err != nil {
 				log.Println(reference)
 				log.Println(cloned)
@@ -123,7 +126,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 		} else {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
-		utils.ReplaceInFile(base+"kustomization.yaml", "  - mr-"+mrId+"/kustomization.yaml\n", "")
+		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - mr-"+mrId+"/kustomization.yaml\n", "")
 	}
 
 	app.repo.AddAll()
@@ -132,12 +135,33 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 }
 
 func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
+	const author = "mrcontroller[bot]"
+
 	for _, mergeRequest := range newMergeRequests {
-		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(os.Getenv("GITLAB_PROJECT_ID"), mergeRequest.ID, &gitlab.ListMergeRequestNotesOptions{})
-		if err != nil {
-			log.Printf("Error while retrieving MR[%d] notes: %s", mergeRequest.ID, err)
+		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(app.pid, mergeRequest.IID, &gitlab.ListMergeRequestNotesOptions{})
+		var botMessage *gitlab.Note = nil
+		for _, message := range messages {
+			if message.Type != "" {
+				botMessage = message
+			}
 		}
-		log.Printf("MR[%d] notes: %v", mergeRequest.ID, messages)
+
+		if botMessage == nil {
+			// New message
+			content := "****\nYour Merge Request will be available under the following URL:\n- https://https://esap-mr-" +
+				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
+			app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
+				Body: &content,
+			})
+		} else {
+			log.Printf("No update for MR message %d", mergeRequest.IID)
+			// Edit message with new status if needed
+		}
+
+		if err != nil {
+			log.Printf("Error while retrieving MR[%d] notes: %s", mergeRequest.IID, err)
+		}
+		log.Printf("MR[%d] notes: %v", mergeRequest.IID, messages)
 	}
 }
 
@@ -178,14 +202,16 @@ func (app *App) loop() {
 	var openMergeRequestIds []int
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
-		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.ID)
-		if !slices.Contains(existingEnvIds, mergeRequest.ID) {
+		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.IID)
+		if !slices.Contains(existingEnvIds, mergeRequest.IID) {
 			newMergeRequests = append(newMergeRequests, mergeRequest)
 		}
 	}
 	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
 
-	app.spawnNewEnv(newMergeRequests, envPrefix)
+	if len(newMergeRequests) > 0 {
+		app.spawnNewEnv(newMergeRequests, envPrefix)
+	}
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
@@ -194,8 +220,11 @@ func (app *App) loop() {
 			envIdsToDrop = append(envIdsToDrop, id)
 		}
 	}
-	app.reapOldEnv(envIdsToDrop, envPrefix)
+	if len(envIdsToDrop) > 0 {
+		app.reapOldEnv(envIdsToDrop, envPrefix)
+	}
 
+	// Messages
 	app.updateMrMessageStatus(openMergeRequests)
 	// TODO: Identify env top update
 }
@@ -260,6 +289,6 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	app := NewApp(repo, git)
+	app := NewApp(repo, git, os.Getenv("GITLAB_PROJECT_ID"))
 	app.Run()
 }
