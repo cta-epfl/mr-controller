@@ -18,8 +18,22 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-func loadCurrentEnv(repo *git.Repository) ([]int, error) {
-	files, err := os.ReadDir(filepath.Join(repo.Folder, "apps/esap/mr"))
+type App struct {
+	repo   *git.Repository
+	gitlab *gitlab.Client
+}
+
+func NewApp(repo *git.Repository, gitlabApi *gitlab.Client) *App {
+	return &App{
+		repo:   repo,
+		gitlab: gitlabApi,
+	}
+}
+
+func (app *App) loadCurrentEnv() ([]int, error) {
+	app.repo.Pull()
+
+	files, err := os.ReadDir(filepath.Join(app.repo.Folder, "apps/esap/mr"))
 	if err != nil {
 		log.Printf("Unable to read mr folder: %s\n", err)
 		return nil, err
@@ -38,15 +52,15 @@ func loadCurrentEnv(repo *git.Repository) ([]int, error) {
 	return existingEnvIds, nil
 }
 
-func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, envPrefix string) {
-	repo.Pull()
+func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix string) {
+	app.repo.Pull()
 
 	for _, mergeRequest := range newMergeRequests {
 		// Namespace
 		mrId := strconv.Itoa(mergeRequest.ID)
 		log.Printf("Generate helm chart for MR %s", mrId)
 
-		base := filepath.Join(repo.Folder, "apps/esap/mr")
+		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		reference := filepath.Join(base, "reference")
 		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.ID))
 
@@ -78,29 +92,29 @@ func spawnNewEnv(repo *git.Repository, newMergeRequests []*gitlab.MergeRequest, 
 		}
 	}
 
-	err := repo.AddAll()
+	err := app.repo.AddAll()
 	if err != nil {
 		log.Fatalf("Add all error: %s", err)
 	}
-	err = repo.Commit("[MR Controller] spawn new envs")
+	err = app.repo.Commit("[MR Controller] spawn new envs")
 	if err != nil {
 		log.Printf("Commit error: %s", err)
 		time.Sleep(30 * time.Minute)
 		log.Fatalf("Commit error: %s", err)
 	}
-	err = repo.Push()
+	err = app.repo.Push()
 	if err != nil {
 		log.Fatalf("Push error: %s", err)
 	}
 }
 
-func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string) {
-	repo.Pull()
+func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
+	app.repo.Pull()
 
 	for _, envId := range envIdsToDrop {
 		// Namespace
 		mrId := strconv.Itoa(envId)
-		base := filepath.Join(repo.Folder, "apps/esap/mr")
+		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		path := filepath.Join(base, "mr-"+mrId)
 
 		err := os.RemoveAll(path)
@@ -112,12 +126,22 @@ func reapOldEnv(repo *git.Repository, envIdsToDrop []int, envPrefix string) {
 		utils.ReplaceInFile(base+"kustomization.yaml", "  - mr-"+mrId+"/kustomization.yaml\n", "")
 	}
 
-	repo.AddAll()
-	repo.Commit("[MR Controller] reaped old envs")
-	repo.Push()
+	app.repo.AddAll()
+	app.repo.Commit("[MR Controller] reaped old envs")
+	app.repo.Push()
 }
 
-func loop(gitlabApi *gitlab.Client, fluxRepo *git.Repository) {
+func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
+	for _, mergeRequest := range newMergeRequests {
+		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(os.Getenv("GITLAB_PROJECT_ID"), mergeRequest.ID, &gitlab.ListMergeRequestNotesOptions{})
+		if err != nil {
+			log.Printf("Error while retrieving MR[%d] notes: %s", mergeRequest.ID, err)
+		}
+		log.Printf("MR[%d] notes: %v", mergeRequest.ID, messages)
+	}
+}
+
+func (app *App) loop() {
 	// TODO: implement
 	// 0. Load existing environements -> OK
 	// 1. Get open MR -> OK
@@ -134,14 +158,14 @@ func loop(gitlabApi *gitlab.Client, fluxRepo *git.Repository) {
 	projectId := os.Getenv("GITLAB_PROJECT_ID")
 	envPrefix := os.Getenv("ENV_PREFIX")
 
-	existingEnvIds, err := loadCurrentEnv(fluxRepo)
+	existingEnvIds, err := app.loadCurrentEnv()
 	if err != nil {
 		log.Fatalf("Unable to load current env from flux repository: %s", err)
 	}
 	log.Printf("Loaded %s envs : %v\n", strconv.Itoa(len(existingEnvIds)), existingEnvIds)
 
 	openedState := "opened"
-	openMergeRequests, _, err := gitlabApi.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
+	openMergeRequests, _, err := app.gitlab.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
 		TargetBranch: &targetBranch,
 		State:        &openedState,
 	})
@@ -161,7 +185,7 @@ func loop(gitlabApi *gitlab.Client, fluxRepo *git.Repository) {
 	}
 	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
 
-	spawnNewEnv(fluxRepo, newMergeRequests, envPrefix)
+	app.spawnNewEnv(newMergeRequests, envPrefix)
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
@@ -170,9 +194,43 @@ func loop(gitlabApi *gitlab.Client, fluxRepo *git.Repository) {
 			envIdsToDrop = append(envIdsToDrop, id)
 		}
 	}
-	reapOldEnv(fluxRepo, envIdsToDrop, envPrefix)
+	app.reapOldEnv(envIdsToDrop, envPrefix)
 
+	app.updateMrMessageStatus(openMergeRequests)
 	// TODO: Identify env top update
+}
+
+func (app *App) Run() {
+
+	ticker := time.NewTicker(2 * time.Minute)
+	quit := make(chan bool)
+	go func() {
+		app.loop()
+		for {
+			log.Println("Loop start")
+			select {
+			case <-ticker.C:
+				app.loop()
+			case <-quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until we receive our signal.
+	<-interruptChan
+
+	// create a deadline to wait for.
+	_, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	quit <- true
+
+	log.Println("Shutting down")
+	os.Exit(0)
 }
 
 func main() {
@@ -202,33 +260,6 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	ticker := time.NewTicker(2 * time.Minute)
-	quit := make(chan bool)
-	go func() {
-		loop(git, repo)
-		for {
-			log.Println("Loop start")
-			select {
-			case <-ticker.C:
-				loop(git, repo)
-			case <-quit:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
-
-	interruptChan := make(chan os.Signal, 1)
-	signal.Notify(interruptChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-
-	// Block until we receive our signal.
-	<-interruptChan
-
-	// create a deadline to wait for.
-	_, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-	quit <- true
-
-	log.Println("Shutting down")
-	os.Exit(0)
+	app := NewApp(repo, git)
+	app.Run()
 }
