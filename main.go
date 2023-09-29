@@ -90,7 +90,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 				utils.ReplaceInFile(file, searchValue, replaceValue)
 			}
 
-			utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", "resources:\n  - mr-"+mrId+"/kustomization.yaml")
+			utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", "resources:\n  - ./mr-"+mrId)
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 		}
 	}
@@ -126,7 +126,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 		} else {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
-		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - mr-"+mrId+"/kustomization.yaml\n", "")
+		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId+"\n", "")
 	}
 
 	app.repo.AddAll()
@@ -141,18 +141,23 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(app.pid, mergeRequest.IID, &gitlab.ListMergeRequestNotesOptions{})
 		var botMessage *gitlab.Note = nil
 		for _, message := range messages {
-			if message.Type != "" {
+			if strings.HasPrefix(message.Body, "****") {
 				botMessage = message
 			}
 		}
 
 		if botMessage == nil {
 			// New message
-			content := "****\nYour Merge Request will be available under the following URL:\n- https://https://esap-mr-" +
+			content := "****\nYour Merge Request will be available under the following URL:\n- https://esap-mr-" +
 				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
-			app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
+			note, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
 				Body: &content,
 			})
+			if err != nil {
+				log.Printf("Error while creating note for MR %d: %s", mergeRequest.IID, err)
+			} else {
+				log.Printf("Note for MR %d created: %s", mergeRequest.IID, note)
+			}
 		} else {
 			log.Printf("No update for MR message %d", mergeRequest.IID)
 			// Edit message with new status if needed
