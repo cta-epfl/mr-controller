@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/exec"
@@ -17,6 +18,24 @@ import (
 	"github.com/xanzy/go-gitlab"
 	"golang.org/x/exp/slices"
 )
+
+type MrDeployStatus int64
+
+const (
+	NotDeployed MrDeployStatus = iota
+	UpToDate
+	UpdateAvailable
+	Pending
+	Desynchronized
+)
+
+// type PipelineStatus int64
+
+// const (
+// 	Pending PipelineStatus = iota
+// 	Failed
+// 	Success
+// )
 
 // TODO: Create new config struct -> including pid, target_branch and so on
 type App struct {
@@ -58,6 +77,12 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 	app.repo.Pull()
 
 	for _, mergeRequest := range newMergeRequests {
+		// Get image tag
+		tag, err := app.getMrImageTag(mergeRequest.IID)
+		if err != nil {
+			continue
+		}
+
 		// Namespace
 		mrId := strconv.Itoa(mergeRequest.IID)
 		log.Printf("Generate helm chart for MR %s", mrId)
@@ -76,22 +101,21 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 				log.Fatalf("Error while duplicating reference folder: %s", err)
 			}
 
-			files := []string{
-				filepath.Join(cloned, "esap-values.yaml"),
-				filepath.Join(cloned, "namespace.yaml"),
-				filepath.Join(cloned, "kustomization.yaml"),
-				filepath.Join(cloned, "django-secret-key-secret.yaml"),
-				filepath.Join(cloned, "gitlab-ctao-secret.yaml"),
+			files, err := os.ReadDir(cloned)
+			if err != nil {
+				log.Fatalf("Error while listing duplicated files: %s", err)
 			}
 
-			searchValue := "esap-mr"
+			searchValue := "esap-mr-{id}"
 			replaceValue := "esap-mr-" + mrId
 			for _, file := range files {
-				utils.ReplaceInFile(file, searchValue, replaceValue)
+				utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
 			}
 
 			utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", "resources:\n  - ./mr-"+mrId)
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
+
+			utils.ReplaceInFile(filepath.Join(base, "esap-values.yaml"), "tag: \"{image-tag}\"", "tag: "+tag)
 		}
 	}
 
@@ -109,6 +133,64 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 	if err != nil {
 		log.Fatalf("Push error: %s", err)
 	}
+}
+
+func (app *App) getMrImageTag(mrId int) (string, error) {
+	pipelines, _, err := app.gitlab.MergeRequests.ListMergeRequestPipelines(app.pid, mrId)
+	log.Printf("Pipelines of mr %d: %v", mrId, pipelines)
+	if err != nil {
+		return "", errors.New("Unable to requests MR pipelines")
+	}
+	if len(pipelines) == 0 {
+		return "", errors.New("No pipelines")
+	}
+
+	latestPipeline := pipelines[0]
+	if slices.Contains([]string{"running", "pending"}, latestPipeline.Status) {
+		return "", errors.New("Pipeline in progress")
+	}
+	if latestPipeline.Status != "success" {
+		log.Printf("%s", latestPipeline)
+		return "", errors.New("Pipeline failed")
+	}
+	log.Printf("%s", latestPipeline)
+
+	return latestPipeline.SHA, nil
+	// app.gitlab.Pipelines.GetLatestPipeline(app.pid, )
+}
+
+func (app *App) updateEnv(envIdsToUpdate []int) {
+	app.repo.Pull()
+	for _, envId := range envIdsToUpdate {
+		tag, err := app.getMrImageTag(envId)
+
+		if err != nil {
+			log.Printf("Error while retrieving MR imageTag : %s", err)
+		} else {
+			log.Printf("Retrieved MR imageTag : %s", tag)
+		}
+
+		commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, envId, &gitlab.GetMergeRequestCommitsOptions{
+			Page: 1, PerPage: 1,
+		})
+		if err != nil {
+			log.Printf("Error while retrieving commit of MR")
+			continue
+		} else if len(commits) > 0 {
+			commit := commits[0]
+			log.Printf("Commit retrieved : %s", commit)
+			// TODO:
+		}
+
+		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
+		cloned := filepath.Join(base, "mr-"+strconv.Itoa(envId))
+
+		valueFile := filepath.Join(cloned, "esap-values.yaml")
+		utils.ReplaceLineInFile(valueFile, "      tag: ", "      tag: "+tag)
+	}
+	// app.repo.AddAll()
+	// app.repo.Commit("[MR Controller] update env with new images")
+	// app.repo.Push()
 }
 
 func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
@@ -134,10 +216,49 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 	app.repo.Push()
 }
 
+func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
+	app.repo.Pull()
+
+	pipelines, _, err := app.gitlab.MergeRequests.ListMergeRequestPipelines(app.pid, mrId)
+	if err != nil || len(pipelines) == 0 {
+		return NotDeployed
+	}
+
+	base := filepath.Join(app.repo.Folder, "apps/esap/mr")
+	cloned := filepath.Join(base, "mr-"+strconv.Itoa(mrId))
+
+	latestPipeline := pipelines[0]
+	if slices.Contains([]string{"running", "pending"}, latestPipeline.Status) {
+		return Pending
+	}
+
+	if _, err := os.Stat(cloned); os.IsNotExist(err) {
+		return NotDeployed
+	}
+	if latestPipeline.Status == "success" {
+		valueFile := filepath.Join(cloned, "esap-values.yaml")
+		b, err := os.ReadFile(valueFile)
+		if err != nil {
+			panic(err)
+		}
+		s := string(b)
+		if !strings.Contains(s, "tag: "+latestPipeline.SHA) {
+			return UpdateAvailable
+		} else {
+			return UpToDate
+		}
+	} else {
+		return Desynchronized
+	}
+}
+
 func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 	const author = "mrcontroller[bot]"
 
 	for _, mergeRequest := range newMergeRequests {
+
+		deployementStatus := app.retrieveEnvironementStatus(mergeRequest.IID)
+
 		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(app.pid, mergeRequest.IID, &gitlab.ListMergeRequestNotesOptions{})
 		var botMessage *gitlab.Note = nil
 		for _, message := range messages {
@@ -145,13 +266,33 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 				botMessage = message
 			}
 		}
+		if err != nil {
+			log.Printf("Error while retrieving MR[%d] notes: %s", mergeRequest.IID, err)
+			return
+		}
+
+		message := ""
+		switch deployementStatus {
+		case UpToDate:
+			message = "****\nYour Merge Request is UP-TO-DATE and should be accessible with the following URL:\n- https://esap-mr-" +
+				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
+		case UpdateAvailable:
+			message = "****\nA newer deployement version of your code is currently in the process of being deployed, once completed, it will be available here:\n- https://esap-mr-" +
+				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
+		case Desynchronized:
+			message = "****\nThe deployement environment is DESYNCHRONISED with your Merge Request, this may be cause by a failing image build pipeline:\n- https://esap-mr-" +
+				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
+		case Pending:
+			message = "****\nA newer deployement version of your code is currently building, once completed, it will be available here:\n- https://esap-mr-" +
+				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
+		case NotDeployed:
+			message = "****\nYour Merge Request is not deployed yet, please verify that the build pipeline has succeeded !\n****"
+		}
 
 		if botMessage == nil {
 			// New message
-			content := "****\nYour Merge Request will be available under the following URL:\n- https://esap-mr-" +
-				strconv.Itoa(mergeRequest.IID) + ".cta.cscs.ch/sdc-portal/\n****\n\nYou might need to wait a few minutes for the service to be online."
 			note, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
-				Body: &content,
+				Body: &message,
 			})
 			if err != nil {
 				log.Printf("Error while creating note for MR %d: %s", mergeRequest.IID, err)
@@ -159,14 +300,15 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 				log.Printf("Note for MR %d created: %s", mergeRequest.IID, note)
 			}
 		} else {
-			log.Printf("No update for MR message %d", mergeRequest.IID)
-			// Edit message with new status if needed
+			note, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
+				Body: &message,
+			})
+			if err != nil {
+				log.Printf("Error while updating note for MR %d: %s", mergeRequest.IID, err)
+			} else {
+				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, note)
+			}
 		}
-
-		if err != nil {
-			log.Printf("Error while retrieving MR[%d] notes: %s", mergeRequest.IID, err)
-		}
-		log.Printf("MR[%d] notes: %v", mergeRequest.IID, messages)
 	}
 }
 
@@ -204,12 +346,14 @@ func (app *App) loop() {
 	}
 
 	// Identify new MR
-	var openMergeRequestIds []int
+	openMergeRequestIds := []int{}
+	newMergeRequestIds := []int{}
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
 		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.IID)
 		if !slices.Contains(existingEnvIds, mergeRequest.IID) {
 			newMergeRequests = append(newMergeRequests, mergeRequest)
+			newMergeRequestIds = append(newMergeRequestIds, mergeRequest.IID)
 		}
 	}
 	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
@@ -220,14 +364,19 @@ func (app *App) loop() {
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
+	envIdsToUpdate := []int{}
 	for _, id := range existingEnvIds {
 		if !slices.Contains(openMergeRequestIds, id) {
 			envIdsToDrop = append(envIdsToDrop, id)
+		} else if !slices.Contains(newMergeRequestIds, id) {
+			envIdsToUpdate = append(envIdsToUpdate, id)
 		}
 	}
 	if len(envIdsToDrop) > 0 {
 		app.reapOldEnv(envIdsToDrop, envPrefix)
 	}
+
+	app.updateEnv(envIdsToUpdate)
 
 	// Messages
 	app.updateMrMessageStatus(openMergeRequests)
