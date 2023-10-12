@@ -138,7 +138,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 			}
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 
-			utils.ReplaceInFile(filepath.Join(cloned, "esap-values.yaml"), "tag: \"{image-tag}\"", "tag: "+tag)
+			utils.ReplaceInFile(filepath.Join(cloned, "esap-values.yaml"), "{image-tag}", tag)
 		}
 	}
 
@@ -219,10 +219,11 @@ func (app *App) updateEnv(envIdsToUpdate []int) {
 func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 	app.repo.Pull()
 
+	base := filepath.Join(app.repo.Folder, "apps/esap/mr")
+
 	for _, envId := range envIdsToDrop {
 		// Namespace
 		mrId := strconv.Itoa(envId)
-		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		path := filepath.Join(base, "mr-"+mrId)
 
 		// TODO: Manage case when no MR are left
@@ -233,6 +234,11 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
 		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId+"\n", "")
+	}
+
+	ressourcesText := "resources:\n  -"
+	if !utils.FileContains(filepath.Join(base, "kustomization.yaml"), ressourcesText) {
+		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "ressources:\n", "")
 	}
 
 	app.repo.AddAll()

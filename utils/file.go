@@ -8,6 +8,15 @@ import (
 	"strings"
 )
 
+func FileContains(file string, search string) bool {
+	input, err := os.ReadFile(file)
+	if err != nil {
+		panic(err)
+	}
+
+	return bytes.Contains(input, []byte(search))
+}
+
 func ReplaceInFile(file string, search string, replace string) bool {
 	input, err := os.ReadFile(file)
 	if err != nil {
