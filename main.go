@@ -327,7 +327,7 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 			if err != nil {
 				log.Printf("Error while creating note for MR %d: %s", mergeRequest.IID, err)
 			} else {
-				log.Printf("Note for MR %d created: %s", mergeRequest.IID, note)
+				log.Printf("Note for MR %d created: %s", mergeRequest.IID, note.Body)
 			}
 		} else {
 			note, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
@@ -336,7 +336,8 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 			if err != nil {
 				log.Printf("Error while updating note for MR %d: %s", mergeRequest.IID, err)
 			} else {
-				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, note)
+				continue
+				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, note.Body)
 			}
 		}
 	}
@@ -411,7 +412,7 @@ func (app *App) loop() {
 
 	// Messages
 	app.updateMrMessageStatus(openMergeRequests)
-	// TODO: Identify env top update
+	// TODO: Identify env to update
 }
 
 func (app *App) Run() {
