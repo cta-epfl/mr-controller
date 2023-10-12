@@ -78,10 +78,22 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 
 	for _, mergeRequest := range newMergeRequests {
 		// Get image tag
-		tag, err := app.getMrImageTag(mergeRequest.IID)
-		if err != nil {
+		// tag, err := app.getMrImageTag(mergeRequest.IID)
+		// if err != nil {
+		// 	continue
+		// }
+		// TODO: Load tag from registry
+		// registryId := os.Getenv("GITLAB_REGISTRY_ID")
+
+		// app.gitlab.ContainerRegistry.GetSingleRegistryRepository(registryId, &gitlab.GetSingleRegistryRepositoryOptions{})
+		// app.gitlab.ContainerRegistry.ListRegistryRepositoryTags(registryId, "esap-mr-"+strconv.Itoa(mergeRequest.ID), &gitlab.ListRegistryRepositoryTagsOptions{})
+
+		commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, mergeRequest.IID, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
+		if err != nil || len(commits) == 0 {
+			log.Printf("No commit identified for MR %d : %s", mergeRequest.IID, err)
 			continue
 		}
+		tag := strconv.Itoa(int(commits[0].CommittedDate.Unix()))
 
 		// Namespace
 		mrId := strconv.Itoa(mergeRequest.IID)
@@ -126,7 +138,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 			}
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 
-			utils.ReplaceInFile(filepath.Join(base, "esap-values.yaml"), "tag: \"{image-tag}\"", "tag: "+tag)
+			utils.ReplaceInFile(filepath.Join(cloned, "esap-values.yaml"), "tag: \"{image-tag}\"", "tag: "+tag)
 		}
 	}
 
@@ -193,11 +205,11 @@ func (app *App) updateEnv(envIdsToUpdate []int) {
 			// TODO:
 		}
 
-		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
-		cloned := filepath.Join(base, "mr-"+strconv.Itoa(envId))
+		// base := filepath.Join(app.repo.Folder, "apps/esap/mr")
+		// cloned := filepath.Join(base, "mr-"+strconv.Itoa(envId))
 
-		valueFile := filepath.Join(cloned, "esap-values.yaml")
-		utils.ReplaceLineInFile(valueFile, "      tag: ", "      tag: "+tag)
+		// valueFile := filepath.Join(cloned, "esap-values.yaml")
+		// utils.ReplaceLineInFile(valueFile, "      tag: ", "      tag: "+tag)
 	}
 	// app.repo.AddAll()
 	// app.repo.Commit("[MR Controller] update env with new images")
@@ -213,6 +225,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		path := filepath.Join(base, "mr-"+mrId)
 
+		// TODO: Manage case when no MR are left
 		err := os.RemoveAll(path)
 		if err != nil {
 			log.Printf("Error while ripping env: %s - %s\n", "mr-"+mrId, err)
@@ -387,7 +400,8 @@ func (app *App) loop() {
 		app.reapOldEnv(envIdsToDrop, envPrefix)
 	}
 
-	app.updateEnv(envIdsToUpdate)
+	// Not needed anymore -> automated using ImagePolicy
+	// app.updateEnv(envIdsToUpdate)
 
 	// Messages
 	app.updateMrMessageStatus(openMergeRequests)
