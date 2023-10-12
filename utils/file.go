@@ -8,18 +8,23 @@ import (
 	"strings"
 )
 
-func ReplaceInFile(file string, search string, replace string) {
+func ReplaceInFile(file string, search string, replace string) bool {
 	input, err := os.ReadFile(file)
 	if err != nil {
 		panic(err)
 	}
 
+	contains := bytes.Contains(input, []byte(search))
+	if !contains {
+		return false
+	}
 	output := bytes.Replace(input, []byte(search), []byte(replace), -1)
 
 	if err = os.WriteFile(file, output, 0666); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	return contains
 }
 
 func ReplaceLineInFile(file string, search string, replace string) {

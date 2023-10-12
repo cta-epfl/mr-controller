@@ -112,7 +112,18 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 				utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
 			}
 
-			utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", "resources:\n  - ./mr-"+mrId)
+			replaceText := "resources:\n  - ./mr-" + mrId
+			replaced := utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "resources:", replaceText)
+			if !replaced {
+				f, err := os.OpenFile(filepath.Join(base, "kustomization.yaml"), os.O_APPEND|os.O_WRONLY, 0644)
+				if err != nil {
+					log.Println(err)
+				}
+				defer f.Close()
+				if _, err := f.WriteString(replaceText); err != nil {
+					log.Println(err)
+				}
+			}
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 
 			utils.ReplaceInFile(filepath.Join(base, "esap-values.yaml"), "tag: \"{image-tag}\"", "tag: "+tag)
