@@ -248,38 +248,36 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 }
 
 func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
-	app.repo.Pull()
-
-	pipelines, _, err := app.gitlab.MergeRequests.ListMergeRequestPipelines(app.pid, mrId)
-	if err != nil || len(pipelines) == 0 {
+	commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, mrId, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
+	// Latest commit
+	if err != nil || len(commits) != 1 {
+		log.Printf("No commit for MR %d - %s", mrId, err)
 		return NotDeployed
 	}
+	latestCommit := commits[0]
+
+	// TODO: Check if an image has been built ???
+
+	app.repo.Pull()
 
 	base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 	cloned := filepath.Join(base, "mr-"+strconv.Itoa(mrId))
 
-	latestPipeline := pipelines[0]
-	if slices.Contains([]string{"running", "pending"}, latestPipeline.Status) {
-		return Pending
-	}
-
 	if _, err := os.Stat(cloned); os.IsNotExist(err) {
 		return NotDeployed
 	}
-	if latestPipeline.Status == "success" {
-		valueFile := filepath.Join(cloned, "esap-values.yaml")
-		b, err := os.ReadFile(valueFile)
-		if err != nil {
-			panic(err)
-		}
-		s := string(b)
-		if !strings.Contains(s, "tag: "+latestPipeline.SHA) {
-			return UpdateAvailable
-		} else {
-			return UpToDate
-		}
+
+	// Check if the latest image tag is deployed
+	valueFile := filepath.Join(cloned, "esap-values.yaml")
+	b, err := os.ReadFile(valueFile)
+	if err != nil {
+		panic(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "tag: "+latestCommit.ID) {
+		return UpdateAvailable
 	} else {
-		return Desynchronized
+		return UpToDate
 	}
 }
 
