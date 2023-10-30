@@ -234,6 +234,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
 		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId+"\n", "")
+		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId, "")
 	}
 
 	ressourcesText := "resources:\n  -"
