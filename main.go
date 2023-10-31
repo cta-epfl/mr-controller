@@ -19,14 +19,14 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-type MrDeployStatus int64
+type MrDeployStatus string
 
 const (
-	NotDeployed MrDeployStatus = iota
-	UpToDate
-	UpdateAvailable
-	Pending
-	Desynchronized
+	NotDeployed     MrDeployStatus = "NOT_DEPLOYED"
+	UpToDate        MrDeployStatus = "UP_TO_DATE"
+	UpdateAvailable MrDeployStatus = "UPDATE_AVAILABLE"
+	Pending         MrDeployStatus = "PENDING"
+	Desynchronized  MrDeployStatus = "DESYNCHRONIZED"
 )
 
 // type PipelineStatus int64
@@ -320,23 +320,23 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 
 		if botMessage == nil {
 			// New message
-			note, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
+			_, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
 				Body: &message,
 			})
 			if err != nil {
 				log.Printf("Error while creating note for MR %d: %s", mergeRequest.IID, err)
 			} else {
-				log.Printf("Note for MR %d created: %s", mergeRequest.IID, note.Body)
+				log.Printf("Note for MR %d created: %s", mergeRequest.IID, UpToDate)
 			}
 		} else {
-			note, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
+			_, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
 				Body: &message,
 			})
 			if err != nil {
 				log.Printf("Error while updating note for MR %d: %s", mergeRequest.IID, err)
 			} else {
 				continue
-				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, note.Body)
+				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, UpToDate)
 			}
 		}
 	}
