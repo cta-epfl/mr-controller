@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"os"
 	"os/exec"
@@ -37,18 +36,24 @@ const (
 // 	Success
 // )
 
-// TODO: Create new config struct -> including pid, target_branch and so on
-type App struct {
-	repo   *git.Repository
-	gitlab *gitlab.Client
-	pid    string
+type AppConfig struct {
+	pid          string
+	targetBranch string
+	envPrefix    string
 }
 
-func NewApp(repo *git.Repository, gitlabApi *gitlab.Client, pid string) *App {
+type App struct {
+	config *AppConfig
+
+	repo   *git.Repository
+	gitlab *gitlab.Client
+}
+
+func NewApp(repo *git.Repository, gitlabApi *gitlab.Client, config *AppConfig) *App {
 	return &App{
+		config: config,
 		repo:   repo,
 		gitlab: gitlabApi,
-		pid:    pid,
 	}
 }
 
@@ -77,18 +82,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 	app.repo.Pull()
 
 	for _, mergeRequest := range newMergeRequests {
-		// Get image tag
-		// tag, err := app.getMrImageTag(mergeRequest.IID)
-		// if err != nil {
-		// 	continue
-		// }
-		// TODO: Load tag from registry
-		// registryId := os.Getenv("GITLAB_REGISTRY_ID")
-
-		// app.gitlab.ContainerRegistry.GetSingleRegistryRepository(registryId, &gitlab.GetSingleRegistryRepositoryOptions{})
-		// app.gitlab.ContainerRegistry.ListRegistryRepositoryTags(registryId, "esap-mr-"+strconv.Itoa(mergeRequest.ID), &gitlab.ListRegistryRepositoryTagsOptions{})
-
-		commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, mergeRequest.IID, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
+		commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.config.pid, mergeRequest.IID, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
 		if err != nil || len(commits) == 0 {
 			log.Printf("No commit identified for MR %d : %s", mergeRequest.IID, err)
 			continue
@@ -158,64 +152,6 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 	}
 }
 
-func (app *App) getMrImageTag(mrId int) (string, error) {
-	pipelines, _, err := app.gitlab.MergeRequests.ListMergeRequestPipelines(app.pid, mrId)
-	log.Printf("Pipelines of mr %d: %v", mrId, pipelines)
-	if err != nil {
-		return "", errors.New("Unable to requests MR pipelines")
-	}
-	if len(pipelines) == 0 {
-		return "", errors.New("No pipelines")
-	}
-
-	latestPipeline := pipelines[0]
-	if slices.Contains([]string{"running", "pending"}, latestPipeline.Status) {
-		return "", errors.New("Pipeline in progress")
-	}
-	if latestPipeline.Status != "success" {
-		log.Printf("%s", latestPipeline)
-		return "", errors.New("Pipeline failed")
-	}
-	log.Printf("%s", latestPipeline)
-
-	return latestPipeline.SHA, nil
-	// app.gitlab.Pipelines.GetLatestPipeline(app.pid, )
-}
-
-func (app *App) updateEnv(envIdsToUpdate []int) {
-	app.repo.Pull()
-	for _, envId := range envIdsToUpdate {
-		tag, err := app.getMrImageTag(envId)
-
-		if err != nil {
-			log.Printf("Error while retrieving MR imageTag : %s", err)
-		} else {
-			log.Printf("Retrieved MR imageTag : %s", tag)
-		}
-
-		commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, envId, &gitlab.GetMergeRequestCommitsOptions{
-			Page: 1, PerPage: 1,
-		})
-		if err != nil {
-			log.Printf("Error while retrieving commit of MR")
-			continue
-		} else if len(commits) > 0 {
-			commit := commits[0]
-			log.Printf("Commit retrieved : %s", commit)
-			// TODO:
-		}
-
-		// base := filepath.Join(app.repo.Folder, "apps/esap/mr")
-		// cloned := filepath.Join(base, "mr-"+strconv.Itoa(envId))
-
-		// valueFile := filepath.Join(cloned, "esap-values.yaml")
-		// utils.ReplaceLineInFile(valueFile, "      tag: ", "      tag: "+tag)
-	}
-	// app.repo.AddAll()
-	// app.repo.Commit("[MR Controller] update env with new images")
-	// app.repo.Push()
-}
-
 func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 	app.repo.Pull()
 
@@ -248,7 +184,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 }
 
 func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
-	commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.pid, mrId, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
+	commits, _, err := app.gitlab.MergeRequests.GetMergeRequestCommits(app.config.pid, mrId, &gitlab.GetMergeRequestCommitsOptions{PerPage: 1})
 	// Latest commit
 	if err != nil || len(commits) != 1 {
 		log.Printf("No commit for MR %d - %s", mrId, err)
@@ -282,13 +218,11 @@ func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
 }
 
 func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
-	const author = "mrcontroller[bot]"
-
 	for _, mergeRequest := range newMergeRequests {
 
 		deployementStatus := app.retrieveEnvironementStatus(mergeRequest.IID)
 
-		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(app.pid, mergeRequest.IID, &gitlab.ListMergeRequestNotesOptions{})
+		messages, _, err := app.gitlab.Notes.ListMergeRequestNotes(app.config.pid, mergeRequest.IID, &gitlab.ListMergeRequestNotesOptions{})
 		var botMessage *gitlab.Note = nil
 		for _, message := range messages {
 			if strings.HasPrefix(message.Body, "****") {
@@ -320,7 +254,7 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 
 		if botMessage == nil {
 			// New message
-			_, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
+			_, _, err := app.gitlab.Notes.CreateMergeRequestNote(app.config.pid, mergeRequest.IID, &gitlab.CreateMergeRequestNoteOptions{
 				Body: &message,
 			})
 			if err != nil {
@@ -329,14 +263,14 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 				log.Printf("Note for MR %d created: %s", mergeRequest.IID, UpToDate)
 			}
 		} else {
-			_, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
+			_, _, err := app.gitlab.Notes.UpdateMergeRequestNote(app.config.pid, mergeRequest.IID, botMessage.ID, &gitlab.UpdateMergeRequestNoteOptions{
 				Body: &message,
 			})
 			if err != nil {
 				log.Printf("Error while updating note for MR %d: %s", mergeRequest.IID, err)
 			} else {
+				// log.Printf("Note for MR %d updated: %s", mergeRequest.IID, UpToDate)
 				continue
-				log.Printf("Note for MR %d updated: %s", mergeRequest.IID, UpToDate)
 			}
 		}
 	}
@@ -355,10 +289,6 @@ func (app *App) loop() {
 	// 5. Messages on GitLab MR
 
 	// TODO: Extract in option struct
-	targetBranch := os.Getenv("TARGET_BRANCH")
-	projectId := os.Getenv("GITLAB_PROJECT_ID")
-	envPrefix := os.Getenv("ENV_PREFIX")
-
 	existingEnvIds, err := app.loadCurrentEnv()
 	if err != nil {
 		log.Fatalf("Unable to load current env from flux repository: %s", err)
@@ -366,8 +296,8 @@ func (app *App) loop() {
 	log.Printf("Loaded %s envs : %v\n", strconv.Itoa(len(existingEnvIds)), existingEnvIds)
 
 	openedState := "opened"
-	openMergeRequests, _, err := app.gitlab.MergeRequests.ListProjectMergeRequests(projectId, &gitlab.ListProjectMergeRequestsOptions{
-		TargetBranch: &targetBranch,
+	openMergeRequests, _, err := app.gitlab.MergeRequests.ListProjectMergeRequests(app.config.pid, &gitlab.ListProjectMergeRequestsOptions{
+		TargetBranch: &app.config.targetBranch,
 		State:        &openedState,
 	})
 	if err != nil {
@@ -377,33 +307,34 @@ func (app *App) loop() {
 
 	// Identify new MR
 	openMergeRequestIds := []int{}
-	newMergeRequestIds := []int{}
+	// newMergeRequestIds := []int{}
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
 		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.IID)
 		if !slices.Contains(existingEnvIds, mergeRequest.IID) {
 			newMergeRequests = append(newMergeRequests, mergeRequest)
-			newMergeRequestIds = append(newMergeRequestIds, mergeRequest.IID)
+			// newMergeRequestIds = append(newMergeRequestIds, mergeRequest.IID)
 		}
 	}
 	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
 
 	if len(newMergeRequests) > 0 {
-		app.spawnNewEnv(newMergeRequests, envPrefix)
+		app.spawnNewEnv(newMergeRequests, app.config.envPrefix)
 	}
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
-	envIdsToUpdate := []int{}
+	// envIdsToUpdate := []int{}
 	for _, id := range existingEnvIds {
 		if !slices.Contains(openMergeRequestIds, id) {
 			envIdsToDrop = append(envIdsToDrop, id)
-		} else if !slices.Contains(newMergeRequestIds, id) {
-			envIdsToUpdate = append(envIdsToUpdate, id)
 		}
+		//  else if !slices.Contains(newMergeRequestIds, id) {
+		// 	envIdsToUpdate = append(envIdsToUpdate, id)
+		// }
 	}
 	if len(envIdsToDrop) > 0 {
-		app.reapOldEnv(envIdsToDrop, envPrefix)
+		app.reapOldEnv(envIdsToDrop, app.config.envPrefix)
 	}
 
 	// Not needed anymore -> automated using ImagePolicy
@@ -411,7 +342,6 @@ func (app *App) loop() {
 
 	// Messages
 	app.updateMrMessageStatus(openMergeRequests)
-	// TODO: Identify env to update
 }
 
 func (app *App) Run() {
@@ -474,6 +404,11 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	app := NewApp(repo, git, os.Getenv("GITLAB_PROJECT_ID"))
+	config := &AppConfig{
+		pid:          os.Getenv("GITLAB_PROJECT_ID"),
+		targetBranch: os.Getenv("TARGET_BRANCH"),
+		envPrefix:    os.Getenv("ENV_PREFIX"),
+	}
+	app := NewApp(repo, git, config)
 	app.Run()
 }
