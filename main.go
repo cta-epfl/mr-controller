@@ -210,7 +210,8 @@ func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
 		panic(err)
 	}
 	s := string(b)
-	if !strings.Contains(s, "tag: "+latestCommit.ID) {
+	versionId := strconv.Itoa(int(latestCommit.CommittedDate.Unix()))
+	if !strings.Contains(s, "tag: "+versionId) {
 		return UpdateAvailable
 	} else {
 		return UpToDate
