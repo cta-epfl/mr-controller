@@ -162,7 +162,6 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 		mrId := strconv.Itoa(envId)
 		path := filepath.Join(base, "mr-"+mrId)
 
-		// TODO: Manage case when no MR are left
 		err := os.RemoveAll(path)
 		if err != nil {
 			log.Printf("Error while ripping env: %s - %s\n", "mr-"+mrId, err)
