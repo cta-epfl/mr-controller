@@ -169,8 +169,7 @@ func (app *App) reapOldEnv(envIdsToDrop []int, envPrefix string) {
 		} else {
 			log.Printf("Reap outdated env: %s\n", "mr-"+mrId)
 		}
-		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId+"\n", "")
-		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "  - ./mr-"+mrId, "")
+		utils.ReplaceInFile(filepath.Join(base, "kustomization.yaml"), "\n  - ./mr-"+mrId, "")
 	}
 
 	ressourcesText := "resources:\n  -"
@@ -278,7 +277,6 @@ func (app *App) updateMrMessageStatus(newMergeRequests []*gitlab.MergeRequest) {
 }
 
 func (app *App) loop() {
-	// TODO: implement
 	// 0. Load existing environements -> OK
 	// 1. Get open MR -> OK
 	// 2. Detect closed MR
@@ -289,7 +287,6 @@ func (app *App) loop() {
 	// 4a. Update environement
 	// 5. Messages on GitLab MR
 
-	// TODO: Extract in option struct
 	existingEnvIds, err := app.loadCurrentEnv()
 	if err != nil {
 		log.Fatalf("Unable to load current env from flux repository: %s", err)
@@ -302,8 +299,8 @@ func (app *App) loop() {
 		State:        &openedState,
 	})
 	if err != nil {
-		// TODO: Manage error
 		log.Printf("Unable to list project MR: %s\n", err)
+		return
 	}
 
 	// Identify new MR
