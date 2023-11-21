@@ -126,7 +126,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 			}
 			for _, file := range appFiles {
 				if !file.IsDir() {
-					utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
+					utils.ReplaceInFile(filepath.Join(clonedApp, file.Name()), searchValue, replaceValue)
 				}
 			}
 
@@ -144,7 +144,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 			}
 			log.Printf("Create new env: %s\n", "mr-"+mrId)
 
-			utils.ReplaceInFile(filepath.Join(cloned, "esap-values.yaml"), "{image-tag}", tag)
+			utils.ReplaceInFile(filepath.Join(clonedApp, "esap-values.yaml"), "{image-tag}", tag)
 		}
 	}
 
@@ -207,14 +207,14 @@ func (app *App) retrieveEnvironementStatus(mrId int) MrDeployStatus {
 	app.repo.Pull()
 
 	base := filepath.Join(app.repo.Folder, "apps/esap/mr")
-	cloned := filepath.Join(base, "mr-"+strconv.Itoa(mrId))
+	clonedApp := filepath.Join(base, "mr-"+strconv.Itoa(mrId), "app")
 
-	if _, err := os.Stat(cloned); os.IsNotExist(err) {
+	if _, err := os.Stat(clonedApp); os.IsNotExist(err) {
 		return NotDeployed
 	}
 
 	// Check if the latest image tag is deployed
-	valueFile := filepath.Join(cloned, "esap-values.yaml")
+	valueFile := filepath.Join(clonedApp, "esap-values.yaml")
 	b, err := os.ReadFile(valueFile)
 	if err != nil {
 		panic(err)
