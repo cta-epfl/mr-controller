@@ -96,6 +96,7 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 		base := filepath.Join(app.repo.Folder, "apps/esap/mr")
 		reference := filepath.Join(base, "reference")
 		cloned := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.IID))
+		clonedApp := filepath.Join(base, "mr-"+strconv.Itoa(mergeRequest.IID), "app")
 
 		if _, err := os.Stat(cloned); os.IsNotExist(err) {
 			cmd := exec.Command("cp", "--recursive", reference, cloned)
@@ -111,11 +112,22 @@ func (app *App) spawnNewEnv(newMergeRequests []*gitlab.MergeRequest, envPrefix s
 			if err != nil {
 				log.Fatalf("Error while listing duplicated files: %s", err)
 			}
+			appFiles, err := os.ReadDir(clonedApp)
+			if err != nil {
+				log.Fatalf("Error while listing duplicated files: %s", err)
+			}
 
 			searchValue := "esap-mr-{id}"
 			replaceValue := "esap-mr-" + mrId
 			for _, file := range files {
-				utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
+				if !file.IsDir() {
+					utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
+				}
+			}
+			for _, file := range appFiles {
+				if !file.IsDir() {
+					utils.ReplaceInFile(filepath.Join(cloned, file.Name()), searchValue, replaceValue)
+				}
 			}
 
 			replaceText := "resources:\n  - ./mr-" + mrId
