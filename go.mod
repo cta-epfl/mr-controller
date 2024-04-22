@@ -3,7 +3,7 @@ module cta.epfl.ch/mr-feature-controller
 go 1.21.1
 
 require (
-	github.com/xanzy/go-gitlab v0.102.0
+	github.com/xanzy/go-gitlab v0.103.0
 	golang.org/x/exp v0.0.0-20231226003508-02704c960a9b
 )
 
