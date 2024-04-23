@@ -1,6 +1,6 @@
 module cta.epfl.ch/mr-feature-controller
 
-go 1.21.1
+go 1.22.2
 
 require (
 	github.com/xanzy/go-gitlab v0.103.0
