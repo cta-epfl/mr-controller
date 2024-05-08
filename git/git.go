@@ -9,12 +9,14 @@ import (
 
 type Repository struct {
 	Repository string
+	Branch     string
 	Folder     string
 }
 
-func NewGit(folder string, repo string) (*Repository, error) {
+func NewGit(folder string, repo string, branch string) (*Repository, error) {
 	g := &Repository{
 		Repository: repo,
+		Branch:     branch,
 		Folder:     folder,
 	}
 
@@ -23,7 +25,7 @@ func NewGit(folder string, repo string) (*Repository, error) {
 	cmd = exec.Command("git", "config", "--global", "user.email", "mrcontroller[bot]@epfl.ch")
 	runCommand(cmd)
 
-	cmd = exec.Command("git", "clone", repo, folder)
+	cmd = exec.Command("git", "clone", repo, folder, "--branch", g.Branch)
 	cmd.Dir = g.Folder
 	err := runCommand(cmd)
 	return g, err
@@ -42,7 +44,7 @@ func (g *Repository) Commit(message string) error {
 }
 
 func (g *Repository) Push() error {
-	cmd := exec.Command("git", "push", "-u", "origin", "main")
+	cmd := exec.Command("git", "push", "-u", "origin", g.Branch)
 	cmd.Dir = g.Folder
 	return runCommand(cmd)
 }

@@ -393,13 +393,14 @@ func main() {
 
 	// Flux repository
 	repository := os.Getenv("FLUX_REPOSITORY")
+	branch := os.Getenv("FLUX_REPOSITORY_BRANCH")
 	dir, err := os.MkdirTemp("", "")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	repo, err := git.NewGit(dir, repository)
+	repo, err := git.NewGit(dir, repository, branch)
 	if err != nil {
 		log.Printf("Error while initialising main flux config repository: %s", err)
 		time.Sleep(60 * time.Minute)
