@@ -15,7 +15,6 @@ import (
 	"cta.epfl.ch/mr-feature-controller/git"
 	"cta.epfl.ch/mr-feature-controller/utils"
 	"github.com/xanzy/go-gitlab"
-	"golang.org/x/exp/slices"
 )
 
 type MrDeployStatus string
@@ -320,9 +319,10 @@ func (app *App) loop() {
 	newMergeRequests := []*gitlab.MergeRequest{}
 	for _, mergeRequest := range openMergeRequests {
 		openMergeRequestIds = append(openMergeRequestIds, mergeRequest.IID)
-		if !slices.Contains(existingEnvIds, mergeRequest.IID) {
-			newMergeRequests = append(newMergeRequests, mergeRequest)
-			// newMergeRequestIds = append(newMergeRequestIds, mergeRequest.IID)
+		for _, id := range existingEnvIds {
+			if id == mergeRequest.IID {
+				newMergeRequests = append(newMergeRequests, mergeRequest)
+			}
 		}
 	}
 	log.Printf("Loaded %s open MR: %v\n", strconv.Itoa(len(openMergeRequests)), openMergeRequestIds)
@@ -333,14 +333,12 @@ func (app *App) loop() {
 
 	// Identify env to reap
 	envIdsToDrop := []int{}
-	// envIdsToUpdate := []int{}
 	for _, id := range existingEnvIds {
-		if !slices.Contains(openMergeRequestIds, id) {
-			envIdsToDrop = append(envIdsToDrop, id)
+		for _, iid := range openMergeRequestIds {
+			if iid == id {
+				envIdsToDrop = append(envIdsToDrop, id)
+			}
 		}
-		//  else if !slices.Contains(newMergeRequestIds, id) {
-		// 	envIdsToUpdate = append(envIdsToUpdate, id)
-		// }
 	}
 	if len(envIdsToDrop) > 0 {
 		app.reapOldEnv(envIdsToDrop, app.config.envPrefix)
