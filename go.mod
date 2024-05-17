@@ -2,10 +2,7 @@ module cta.epfl.ch/mr-feature-controller
 
 go 1.22.2
 
-require (
-	github.com/xanzy/go-gitlab v0.105.0
-	golang.org/x/exp v0.0.0-20231226003508-02704c960a9b
-)
+require github.com/xanzy/go-gitlab v0.105.0
 
 require (
 	github.com/google/go-querystring v1.1.0 // indirect
